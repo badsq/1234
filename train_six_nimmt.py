@@ -55,6 +55,7 @@ def train_selfplay(
     lrs = [base_lr * (1 + 0.1 * i) for i in range(env.n_players)]
     agents = [RLAgent(env.obs_dim, lr=lr) for lr in lrs]
     best_scores = [float("inf")] * env.n_players
+
     for cycle in range(cycles):
         for _ in range(episodes_per_cycle):
             logps, vals, rews, ents, _ = run_episode(env, agents)
@@ -62,12 +63,12 @@ def train_selfplay(
                 ag.update(logps[i], vals[i], rews[i], ents[i])
         avg = evaluate_agents(env, agents, games=200)
         for i in range(env.n_players):
+
             if avg[i] < best_scores[i]:
                 best_scores[i] = avg[i]
                 agents[i].save(f"agent{i}_best.pth")
         print(f"Cycle {cycle}: avg penalties {avg}")
     return agents, best_scores
-
 
 def render_games(env: SixNimmtEnv, agents: Sequence, n: int = 3):
     for g in range(n):
@@ -103,4 +104,5 @@ if __name__ == "__main__":
 
     best_idx = int(np.argmin(best_scores))
     print(f"Best agent: {best_idx} with avg penalty {best_scores[best_idx]:.2f}")
+
     render_games(env, agents, n=3)
