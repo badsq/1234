@@ -110,10 +110,11 @@ class RLAgent:
         values_t = torch.stack(values)
         log_probs_t = torch.stack(log_probs)
         entropies_t = torch.stack(entropies)
-        advantages = returns_t - values_t.detach()
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        policy_loss = -(log_probs_t * advantages).mean()
-        value_loss = advantages.pow(2).mean()
+        advantages = returns_t - values_t
+        policy_adv = advantages.detach()
+        policy_adv = (policy_adv - policy_adv.mean()) / (policy_adv.std() + 1e-8)
+        policy_loss = -(log_probs_t * policy_adv).mean()
+        value_loss = (returns_t - values_t).pow(2).mean()
         entropy_loss = entropies_t.mean()
         loss = policy_loss + 0.5 * value_loss - 0.01 * entropy_loss
         self.optimizer.zero_grad()
