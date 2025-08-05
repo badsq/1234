@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from six_nimmt_env import SixNimmtEnv
-from bots import RLAgent, RandomBot, RuleBot
+from bots import RLAgent
 
 
 # ---------------------------------------------------------------------------
@@ -48,47 +48,27 @@ def evaluate_agents(env: SixNimmtEnv, agents: Sequence, games: int = 150):
 def train_selfplay(
     cycles: int = 30,
     episodes_per_cycle: int = 1200,
-    bot_episodes: int = 200,
 ) -> tuple[List[RLAgent], List[float]]:
-    """Train four agents in self-play with extra fine-tuning against RuleBot."""
-    env = SixNimmtEnv()
-    agents = [RLAgent(env.obs_dim) for _ in range(4)]
-    best_scores = [float("inf")] * 4
+    """Train six diverse agents in self-play."""
+    env = SixNimmtEnv(n_players=6)
+    base_lr = 3e-4
+    lrs = [base_lr * (1 + 0.1 * i) for i in range(env.n_players)]
+    agents = [RLAgent(env.obs_dim, lr=lr) for lr in lrs]
+    best_scores = [float("inf")] * env.n_players
+
     for cycle in range(cycles):
         for _ in range(episodes_per_cycle):
             logps, vals, rews, ents, _ = run_episode(env, agents)
             for i, ag in enumerate(agents):
                 ag.update(logps[i], vals[i], rews[i], ents[i])
-        # additional training vs heuristic bots to boost win-rate
-        for i, ag in enumerate(agents):
-            opponents = [ag if j == i else RuleBot() for j in range(4)]
-            for _ in range(bot_episodes):
-                logps, vals, rews, ents, _ = run_episode(env, opponents)
-                ag.update(logps[i], vals[i], rews[i], ents[i])
-        # evaluation and saving
         avg = evaluate_agents(env, agents, games=200)
-        for i in range(4):
+        for i in range(env.n_players):
+
             if avg[i] < best_scores[i]:
                 best_scores[i] = avg[i]
                 agents[i].save(f"agent{i}_best.pth")
         print(f"Cycle {cycle}: avg penalties {avg}")
     return agents, best_scores
-
-
-def duel(agent: RLAgent, opponent_factory, games: int = 300):
-    env = SixNimmtEnv(n_players=2)
-    wins = 0
-    sum_agent = 0
-    sum_opponent = 0
-    for _ in range(games):
-        players = [agent, opponent_factory()]
-        _, _, _, _, scores = run_episode(env, players, collect_logs=False)
-        sum_agent += scores[0]
-        sum_opponent += scores[1]
-        if scores[0] < scores[1]:
-            wins += 1
-    return sum_agent / games, sum_opponent / games, wins / games
-
 
 def render_games(env: SixNimmtEnv, agents: Sequence, n: int = 3):
     for g in range(n):
@@ -111,35 +91,18 @@ if __name__ == "__main__":
     parser.add_argument("--load", action="store_true", help="skip training and load saved agents")
     parser.add_argument("--cycles", type=int, default=30)
     parser.add_argument("--episodes", type=int, default=1200)
-    parser.add_argument("--bot-episodes", type=int, default=200, help="fine-tune vs RuleBot per cycle")
     args = parser.parse_args()
 
+    env = SixNimmtEnv(n_players=6)
     if args.load:
-        env = SixNimmtEnv()
-        agents = [RLAgent(env.obs_dim) for _ in range(4)]
+        agents = [RLAgent(env.obs_dim) for _ in range(env.n_players)]
         for i, ag in enumerate(agents):
             ag.load(f"agent{i}_best.pth")
+        best_scores = evaluate_agents(env, agents, games=300)
     else:
-        agents, _ = train_selfplay(args.cycles, args.episodes, args.bot_episodes)
-        env = SixNimmtEnv()
+        agents, best_scores = train_selfplay(args.cycles, args.episodes)
 
-    # find best agent based on saved scores
-    results = []
-    for i in range(4):
-        ag = RLAgent(env.obs_dim)
-        ag.load(f"agent{i}_best.pth")
-        res = evaluate_agents(env, [ag] + [RandomBot(), RandomBot(), RandomBot()], games=300)
-        results.append(res[0])
-    best_idx = int(np.argmin(results))
-    best_agent = RLAgent(env.obs_dim)
-    best_agent.load(f"agent{best_idx}_best.pth")
-    # duels
-    avg_a, avg_o, win = duel(best_agent, RandomBot)
-    print(f"Vs RandomBot: agent {avg_a:.2f}, opp {avg_o:.2f}, win-rate {win:.2f}")
-    avg_a, avg_o, win = duel(best_agent, RuleBot)
-    print(f"Vs RuleBot: agent {avg_a:.2f}, opp {avg_o:.2f}, win-rate {win:.2f}")
-    # render
-    agents = [RLAgent(env.obs_dim) for _ in range(4)]
-    for i, ag in enumerate(agents):
-        ag.load(f"agent{i}_best.pth")
+    best_idx = int(np.argmin(best_scores))
+    print(f"Best agent: {best_idx} with avg penalty {best_scores[best_idx]:.2f}")
+
     render_games(env, agents, n=3)
