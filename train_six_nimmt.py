@@ -49,8 +49,14 @@ def train_selfplay(
     cycles: int = 30,
     episodes_per_cycle: int = 1200,
     bot_episodes: int = 200,
+    target_winrate: float = 0.75,
 ) -> tuple[List[RLAgent], List[float]]:
-    """Train four agents in self-play with extra fine-tuning against RuleBot."""
+    """Train four agents in self-play with extra fine-tuning against RuleBot.
+
+    Training stops early once any agent achieves the ``target_winrate`` against
+    ``RuleBot`` to focus computation on producing a policy strong enough to
+    beat human opponents.
+    """
     env = SixNimmtEnv()
     agents = [RLAgent(env.obs_dim) for _ in range(4)]
     best_scores = [float("inf")] * 4
@@ -67,11 +73,23 @@ def train_selfplay(
                 ag.update(logps[i], vals[i], rews[i], ents[i])
         # evaluation and saving
         avg = evaluate_agents(env, agents, games=200)
+        best_win = 0.0
         for i in range(4):
             if avg[i] < best_scores[i]:
                 best_scores[i] = avg[i]
                 agents[i].save(f"agent{i}_best.pth")
-        print(f"Cycle {cycle}: avg penalties {avg}")
+            # quick duel check vs RuleBot to gauge human-level strength
+            _, _, win = duel(agents[i], RuleBot, games=150)
+            best_win = max(best_win, win)
+        print(
+            f"Cycle {cycle}: avg penalties {avg}, best win-rate vs RuleBot {best_win:.2f}"
+        )
+        if best_win >= target_winrate:
+            print(
+                f"Target win-rate {target_winrate:.2f} reached; stopping training early."
+            )
+            break
+
     return agents, best_scores
 
 
@@ -111,7 +129,15 @@ if __name__ == "__main__":
     parser.add_argument("--load", action="store_true", help="skip training and load saved agents")
     parser.add_argument("--cycles", type=int, default=30)
     parser.add_argument("--episodes", type=int, default=1200)
-    parser.add_argument("--bot-episodes", type=int, default=200, help="fine-tune vs RuleBot per cycle")
+    parser.add_argument(
+        "--bot-episodes", type=int, default=200, help="fine-tune vs RuleBot per cycle"
+    )
+    parser.add_argument(
+        "--target-winrate",
+        type=float,
+        default=0.75,
+        help="early-stop once any agent surpasses this win-rate vs RuleBot",
+    )
     args = parser.parse_args()
 
     if args.load:
@@ -120,7 +146,10 @@ if __name__ == "__main__":
         for i, ag in enumerate(agents):
             ag.load(f"agent{i}_best.pth")
     else:
-        agents, _ = train_selfplay(args.cycles, args.episodes, args.bot_episodes)
+        agents, _ = train_selfplay(
+            args.cycles, args.episodes, args.bot_episodes, args.target_winrate
+        )
+
         env = SixNimmtEnv()
 
     # find best agent based on saved scores
