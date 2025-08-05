@@ -89,6 +89,7 @@ def train_selfplay(
                 f"Target win-rate {target_winrate:.2f} reached; stopping training early."
             )
             break
+
     return agents, best_scores
 
 
@@ -148,6 +149,7 @@ if __name__ == "__main__":
         agents, _ = train_selfplay(
             args.cycles, args.episodes, args.bot_episodes, args.target_winrate
         )
+
         env = SixNimmtEnv()
 
     # find best agent based on saved scores

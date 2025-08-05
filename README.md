@@ -5,6 +5,7 @@ This repository implements a reinforcement learning setup for the card game *6 n
 ## Files
 - `six_nimmt_env.py` – Gymnasium environment of the game.
 - `bots.py` – helper agents (`RandomBot`, `RuleBot`, and `RLAgent`).
+
 - `train_six_nimmt.py` – training script performing long self-play training with an actor-critic agent, extra fine-tuning against the rule-based bot, evaluation, duels and rendering. Training can stop early once a target win-rate versus `RuleBot` is reached.
 - `play_six_nimmt.py` – console interface to play against trained agents.
 
