@@ -19,12 +19,12 @@ python train_six_nimmt.py --cycles 30 --episodes 1200 --batch-size 8 --num-envs 
 each optimisation step. Combine it with `--num-envs` to roll out many games in
 lockstep and feed massive tensors to the GPU.
 
-Use `--load` to skip training and reuse existing `agent*_best.pth`. After training the script evaluates the agents against each other and renders three sample games in text form.
+Use `--load` to skip training and reuse existing checkpoints. Pass `--checkpoint best` (default) to load the strongest group of models saved for maximising the penalty of player 0, or `--checkpoint last` to inspect the most recent training snapshot. After loading or training the script evaluates the agents as a team and renders three sample games in text form.
 
 To challenge the trained policies interactively, run:
 
 ```bash
-python play_six_nimmt.py --device cuda
+python play_six_nimmt.py --device cuda --checkpoint best
 ```
 
-The script loads models for players 1–3; the human always takes seat 0. Missing models fall back to the heuristic `RuleBot`.
+The script loads models for players 1–3; the human always takes seat 0. Use `--checkpoint last` to play against the latest training snapshot. Missing models fall back to the heuristic `RuleBot`.

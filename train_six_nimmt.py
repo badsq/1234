@@ -91,11 +91,23 @@ def run_batch(
     return out
 
 
-def evaluate_agents(env: SixNimmtEnv, agents: Sequence, games: int = 150):
+def evaluate_agents(
+    env: SixNimmtEnv,
+    agents: Sequence,
+    games: int = 150,
+    target: int | None = None,
+):
+    """Average penalties over ``games`` episodes.
+
+    When ``target`` is provided the episode uses the same reward shaping as
+    training so that all agents focus on the specified seat. The returned array
+    always contains the raw penalty scores from the environment."""
     total = np.zeros(len(agents))
     for _ in range(games):
-        _, _, _, _, scores = run_episode(env, agents, collect_logs=False)
-        total += np.array(scores)
+        _, _, _, _, scores = run_episode(
+            env, agents, collect_logs=False, target=target
+        )
+        total += np.array(scores, dtype=np.float64)
     return total / games
 
 
@@ -105,7 +117,7 @@ def train_selfplay(
     batch_size: int = 8,
     device: str | None = None,
     num_envs: int = 1,
-) -> tuple[List[RLAgent], List[float]]:
+) -> tuple[List[RLAgent], float]:
     """Train four diverse agents in self-play.
 
     ``num_envs`` parallel environments are rolled out concurrently so that
@@ -113,13 +125,15 @@ def train_selfplay(
 
     Players other than index ``0`` receive additional reward equal to any
     penalty incurred by player ``0`` so that they learn to focus attacks on the
-    human-controlled seat."""
+    human-controlled seat.  Best checkpoints are selected using the average
+    penalty accumulated by player ``0`` so that the team is optimised for
+    harassing the human opponent."""
     envs = [SixNimmtEnv(n_players=4) for _ in range(num_envs)]
     eval_env = SixNimmtEnv(n_players=4)
     base_lr = 3e-4
     lrs = [base_lr * (1 + 0.1 * i) for i in range(eval_env.n_players)]
     agents = [RLAgent(eval_env.obs_dim, lr=lr, device=device) for lr in lrs]
-    best_scores = [float("inf")] * eval_env.n_players
+    best_target = -float("inf")
     for cycle in range(cycles):
         batch_logs = [
             {"log_probs": [], "values": [], "rewards": [], "entropies": []}
@@ -150,13 +164,16 @@ def train_selfplay(
                 rewards = torch.cat(batch_logs[i]["rewards"], dim=0)
                 entropies = torch.cat(batch_logs[i]["entropies"], dim=0)
                 ag.update_batch(log_probs, values, rewards, entropies)
-        avg = evaluate_agents(eval_env, agents, games=200)
+        avg = evaluate_agents(eval_env, agents, games=200, target=0)
+        team_score = avg[0]
         for i in range(eval_env.n_players):
-            if avg[i] < best_scores[i]:
-                best_scores[i] = avg[i]
+            agents[i].save(f"agent{i}_last.pth")
+        if team_score > best_target:
+            best_target = team_score
+            for i in range(eval_env.n_players):
                 agents[i].save(f"agent{i}_best.pth")
         print(f"Cycle {cycle}: avg penalties {avg}")
-    return agents, best_scores
+    return agents, best_target
 
 
 def render_games(env: SixNimmtEnv, agents: Sequence, n: int = 3):
@@ -183,31 +200,37 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--num-envs", type=int, default=1, help="number of parallel environments")
+    parser.add_argument(
+        "--checkpoint",
+        choices=["best", "last"],
+        default="best",
+        help="which saved models to load when using --load",
+    )
     args = parser.parse_args()
 
     env = SixNimmtEnv(n_players=4)
     if args.load:
         agents = [RLAgent(env.obs_dim, device=args.device) for _ in range(env.n_players)]
         for i, ag in enumerate(agents):
-            ag.load(f"agent{i}_best.pth")
-        if os.path.exists("agent_scores.json"):
-            with open("agent_scores.json", "r") as f:
-                best_scores = json.load(f)
+            ag.load(f"agent{i}_{args.checkpoint}.pth")
+        if os.path.exists("team_score.json"):
+            with open("team_score.json", "r") as f:
+                best_target = json.load(f)["best_player0_penalty"]
         else:
-            best_scores = evaluate_agents(env, agents, games=300).tolist()
-            with open("agent_scores.json", "w") as f:
-                json.dump(best_scores, f)
+            avg = evaluate_agents(env, agents, games=300, target=0)
+            best_target = float(avg[0])
+            with open("team_score.json", "w") as f:
+                json.dump({"best_player0_penalty": best_target}, f)
     else:
-        agents, best_scores = train_selfplay(
+        agents, best_target = train_selfplay(
             args.cycles,
             args.episodes,
             args.batch_size,
             device=args.device,
             num_envs=args.num_envs,
         )
-        with open("agent_scores.json", "w") as f:
-            json.dump(best_scores, f)
+        with open("team_score.json", "w") as f:
+            json.dump({"best_player0_penalty": best_target}, f)
 
-    best_idx = int(np.argmin(best_scores))
-    print(f"Best agent: {best_idx} with avg penalty {best_scores[best_idx]:.2f}")
+    print(f"Best recorded player0 penalty: {best_target:.2f}")
     render_games(env, agents, n=3)

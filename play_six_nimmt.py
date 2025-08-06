@@ -7,10 +7,10 @@ from six_nimmt_env import SixNimmtEnv, bull_value
 from bots import RLAgent, RuleBot
 
 
-def load_opponents(env: SixNimmtEnv, device: str) -> List:
+def load_opponents(env: SixNimmtEnv, device: str, checkpoint: str) -> List:
     opponents: List = []
     for i in range(1, 4):
-        path = f"agent{i}_best.pth"
+        path = f"agent{i}_{checkpoint}.pth"
         if os.path.exists(path):
             agent = RLAgent(env.obs_dim, device=device)
             agent.load(path)
@@ -45,9 +45,9 @@ def choose_card(hand: List[int]) -> int:
         print("Invalid choice, try again.")
 
 
-def main(device: str = "cpu") -> None:
+def main(device: str = "cpu", checkpoint: str = "best") -> None:
     env = SixNimmtEnv()
-    opponents = load_opponents(env, device)
+    opponents = load_opponents(env, device, checkpoint)
     obs, _ = env.reset()
     done = False
     while not done:
@@ -78,6 +78,12 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--checkpoint",
+        choices=["best", "last"],
+        default="best",
+        help="which saved models to load",
+    )
     args = parser.parse_args()
 
-    main(device=args.device)
+    main(device=args.device, checkpoint=args.checkpoint)
