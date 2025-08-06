@@ -12,11 +12,12 @@ This repository implements a reinforcement learning setup for the card game *6 n
 Run extended self-play training (will overwrite previous models):
 
 ```bash
-python train_six_nimmt.py --cycles 30 --episodes 1200 --batch-size 8 --device cuda
+python train_six_nimmt.py --cycles 30 --episodes 1200 --batch-size 8 --num-envs 256 --device cuda
 ```
 
-`--batch-size` controls how many episodes contribute to each optimisation
-step, enabling larger tensor batches and higher GPU utilisation.
+`--batch-size` controls how many *batches* of parallel episodes contribute to
+each optimisation step. Combine it with `--num-envs` to roll out many games in
+lockstep and feed massive tensors to the GPU.
 
 Use `--load` to skip training and reuse existing `agent*_best.pth`. After training the script evaluates the agents against each other, stores their average penalties in `agent_scores.json`, and renders three sample games in text form.
 

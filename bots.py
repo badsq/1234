@@ -75,23 +75,24 @@ class RLAgent:
         self.optimizer = optim.Adam(params, lr=lr)
 
     def act(self, obs: np.ndarray) -> Tuple[int, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Select an action and return logging info.
+        """Select an action for a single observation."""
+        acts, logp, ent, val = self.act_batch(obs[None, :])
+        return int(acts[0]), logp[0], ent[0], val[0]
 
-        Returns the sampled action index, log-probability, entropy and value
-        estimate so the training loop can apply entropy regularisation and
-        advantage-based updates.
-        """
-        obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+    def act_batch(
+        self, obs_batch: np.ndarray
+    ) -> Tuple[np.ndarray, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Vectorised action selection for a batch of observations."""
+        obs_t = torch.as_tensor(obs_batch, dtype=torch.float32, device=self.device)
         logits = self.policy(obs_t)
-        mask = obs_t[:10].gt(0).float()
+        mask = obs_t[:, :10].gt(0).float()
         masked = logits - (1 - mask) * 1e9
-        probs = torch.softmax(masked, dim=-1)
-        dist = torch.distributions.Categorical(probs)
-        action = dist.sample()
-        logp = dist.log_prob(action)
+        dist = torch.distributions.Categorical(logits=masked)
+        actions = dist.sample()
+        logp = dist.log_prob(actions)
         ent = dist.entropy()
-        value = self.value(obs_t)
-        return int(action.item()), logp, ent, value
+        values = self.value(obs_t)
+        return actions.cpu().numpy(), logp, ent, values
 
     def update(
         self,
@@ -111,6 +112,38 @@ class RLAgent:
         values_t = torch.stack(values).to(self.device)
         log_probs_t = torch.stack(log_probs).to(self.device)
         entropies_t = torch.stack(entropies).to(self.device)
+        advantages = returns_t - values_t
+        policy_adv = advantages.detach()
+        policy_adv = (policy_adv - policy_adv.mean()) / (policy_adv.std() + 1e-8)
+        policy_loss = -(log_probs_t * policy_adv).mean()
+        value_loss = (returns_t - values_t).pow(2).mean()
+        entropy_loss = entropies_t.mean()
+        loss = policy_loss + 0.5 * value_loss - 0.01 * entropy_loss
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+    def update_batch(
+        self,
+        log_probs: torch.Tensor,
+        values: torch.Tensor,
+        rewards: torch.Tensor,
+        entropies: torch.Tensor,
+        gamma: float = 0.99,
+    ) -> None:
+        """Update from batched trajectories.
+
+        All tensors are expected to have shape ``(batch, steps)`` where batch
+        is the number of parallel episodes."""
+        returns = torch.zeros_like(rewards)
+        G = torch.zeros(rewards.size(0), device=self.device)
+        for t in reversed(range(rewards.size(1))):
+            G = rewards[:, t] + gamma * G
+            returns[:, t] = G
+        log_probs_t = log_probs.reshape(-1)
+        values_t = values.reshape(-1)
+        returns_t = returns.reshape(-1)
+        entropies_t = entropies.reshape(-1)
         advantages = returns_t - values_t
         policy_adv = advantages.detach()
         policy_adv = (policy_adv - policy_adv.mean()) / (policy_adv.std() + 1e-8)
