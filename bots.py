@@ -100,7 +100,7 @@ class RLAgent:
         values: List[torch.Tensor],
         rewards: List[float],
         entropies: List[torch.Tensor],
-        gamma: float = 0.99,
+        gamma: float = 0.95,
     ) -> None:
         """Update policy and value networks from episode logs."""
         returns: List[float] = []

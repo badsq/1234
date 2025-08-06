@@ -132,6 +132,9 @@ def train_selfplay(
             if avg[i] < best_scores[i]:
                 best_scores[i] = avg[i]
                 agents[i].save(f"agent{i}_best.pth")
+            agents[i].save(f"agent{i}_last.pth")
+        with open("agent_scores_last.json", "w") as f:
+            json.dump(list(avg), f)
         print(f"Cycle {cycle}: avg penalties {avg}")
     return agents, best_scores
 

@@ -10,7 +10,7 @@ from bots import RLAgent, RuleBot
 
 
 def load_opponents(env: SixNimmtEnv, device: str) -> List:
-    scores_path = "agent_scores.json"
+    scores_path = "agent_scores_last.json"
     worst = 3
     if os.path.exists(scores_path):
         with open(scores_path, "r") as f:
@@ -20,13 +20,12 @@ def load_opponents(env: SixNimmtEnv, device: str) -> List:
     for i in range(4):
         if i == worst:
             continue
-        path = f"agent{i}_best.pth"
+        path = f"agent{i}_last.pth"
         if os.path.exists(path):
+            print(f"Loading agent {i} from {path}")
             agent = RLAgent(env.obs_dim, device=device)
             agent.load(path)
             opponents.append(agent)
-        else:
-            opponents.append(RuleBot())
     return opponents
 
 
