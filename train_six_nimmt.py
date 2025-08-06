@@ -38,6 +38,37 @@ def run_episode(env: SixNimmtEnv, players: Sequence, collect_logs: bool = True):
     return log_probs, values, rewards, entropies, env.scores
 
 
+def run_parallel(envs: List[SixNimmtEnv], players: Sequence, collect_logs: bool = True):
+    """Run multiple environments in lockstep and collect trajectories."""
+    n_envs = len(envs)
+    obs = np.stack([e.reset()[0] for e in envs])
+    log_probs = [[[] for _ in range(n_envs)] for _ in players]
+    entropies = [[[] for _ in range(n_envs)] for _ in players]
+    values = [[[] for _ in range(n_envs)] for _ in players]
+    rewards = [[[] for _ in range(n_envs)] for _ in players]
+    for _ in range(10):
+        step_actions = [[] for _ in range(n_envs)]
+        for i, p in enumerate(players):
+            if isinstance(p, RLAgent):
+                acts, logp, ent, val = p.act_batch(obs[:, i, :])
+                for e in range(n_envs):
+                    step_actions[e].append(int(acts[e]))
+                    if collect_logs:
+                        log_probs[i][e].append(logp[e])
+                        entropies[i][e].append(ent[e])
+                        values[i][e].append(val[e])
+            else:
+                for e in range(n_envs):
+                    step_actions[e].append(p.act(obs[e, i]))
+        for e, env in enumerate(envs):
+            obs_e, step_rew, _, _, _ = env.step(step_actions[e])
+            obs[e] = obs_e
+            for i in range(len(players)):
+                rewards[i][e].append(step_rew[i])
+    scores = [env.scores for env in envs]
+    return log_probs, values, rewards, entropies, scores
+
+
 def evaluate_agents(env: SixNimmtEnv, agents: Sequence, games: int = 150):
     total = np.zeros(len(agents))
     for _ in range(games):
@@ -50,20 +81,26 @@ def train_selfplay(
     cycles: int = 30,
     episodes_per_cycle: int = 1200,
     device: str | None = None,
+    num_envs: int = 32,
 ) -> tuple[List[RLAgent], List[float]]:
-    """Train four diverse agents in self-play."""
-    env = SixNimmtEnv(n_players=4)
+    """Train four diverse agents in self-play using batched environments."""
+    base_env = SixNimmtEnv(n_players=4)
     base_lr = 3e-4
-    lrs = [base_lr * (1 + 0.1 * i) for i in range(env.n_players)]
-    agents = [RLAgent(env.obs_dim, lr=lr, device=device) for lr in lrs]
-    best_scores = [float("inf")] * env.n_players
+    lrs = [base_lr * (1 + 0.1 * i) for i in range(base_env.n_players)]
+    agents = [RLAgent(base_env.obs_dim, lr=lr, device=device) for lr in lrs]
+    envs = [SixNimmtEnv(n_players=base_env.n_players) for _ in range(num_envs)]
+    best_scores = [float("inf")] * base_env.n_players
     for cycle in range(cycles):
-        for _ in range(episodes_per_cycle):
-            logps, vals, rews, ents, _ = run_episode(env, agents)
+        remaining = episodes_per_cycle
+        while remaining > 0:
+            batch = min(remaining, num_envs)
+            batch_envs = envs[:batch]
+            logps, vals, rews, ents, _ = run_parallel(batch_envs, agents)
             for i, ag in enumerate(agents):
-                ag.update(logps[i], vals[i], rews[i], ents[i])
-        avg = evaluate_agents(env, agents, games=200)
-        for i in range(env.n_players):
+                ag.update_batch(logps[i], vals[i], rews[i], ents[i])
+            remaining -= batch
+        avg = evaluate_agents(base_env, agents, games=200)
+        for i in range(base_env.n_players):
             if avg[i] < best_scores[i]:
                 best_scores[i] = avg[i]
                 agents[i].save(f"agent{i}_best.pth")
@@ -93,6 +130,7 @@ if __name__ == "__main__":
     parser.add_argument("--cycles", type=int, default=30)
     parser.add_argument("--episodes", type=int, default=1200)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--num-envs", type=int, default=32, help="parallel environments for self-play")
     args = parser.parse_args()
 
     env = SixNimmtEnv(n_players=4)
@@ -108,7 +146,7 @@ if __name__ == "__main__":
             with open("agent_scores.json", "w") as f:
                 json.dump(best_scores, f)
     else:
-        agents, best_scores = train_selfplay(args.cycles, args.episodes, device=args.device)
+        agents, best_scores = train_selfplay(args.cycles, args.episodes, device=args.device, num_envs=args.num_envs)
         with open("agent_scores.json", "w") as f:
             json.dump(best_scores, f)
 

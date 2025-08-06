@@ -93,6 +93,20 @@ class RLAgent:
         value = self.value(obs_t)
         return int(action.item()), logp, ent, value
 
+    def act_batch(self, obs_batch: np.ndarray) -> Tuple[np.ndarray, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Vectorised action selection for a batch of observations."""
+        obs_t = torch.tensor(obs_batch, dtype=torch.float32, device=self.device)
+        logits = self.policy(obs_t)
+        masks = torch.tensor([[1.0 if c > 0 else 0.0 for c in obs[:10]] for obs in obs_batch], dtype=torch.float32, device=self.device)
+        masked = logits - (1 - masks) * 1e9
+        probs = torch.softmax(masked, dim=-1)
+        dist = torch.distributions.Categorical(probs)
+        actions = dist.sample()
+        logp = dist.log_prob(actions)
+        ent = dist.entropy()
+        values = self.value(obs_t)
+        return actions.cpu().numpy(), logp, ent, values
+
     def update(
         self,
         log_probs: List[torch.Tensor],
@@ -118,6 +132,44 @@ class RLAgent:
         value_loss = (returns_t - values_t).pow(2).mean()
         entropy_loss = entropies_t.mean()
         loss = policy_loss + 0.5 * value_loss - 0.01 * entropy_loss
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+    def update_batch(
+        self,
+        batch_log_probs: List[List[torch.Tensor]],
+        batch_values: List[List[torch.Tensor]],
+        batch_rewards: List[List[float]],
+        batch_entropies: List[List[torch.Tensor]],
+        gamma: float = 0.99,
+    ) -> None:
+        policy_losses = []
+        value_losses = []
+        entropy_terms = []
+        for log_probs, values, rewards, entropies in zip(
+            batch_log_probs, batch_values, batch_rewards, batch_entropies
+        ):
+            returns = []
+            G = 0.0
+            for r in reversed(rewards):
+                G = r + gamma * G
+                returns.insert(0, G)
+            returns_t = torch.tensor(returns, dtype=torch.float32, device=self.device)
+            values_t = torch.stack(values).to(self.device)
+            log_probs_t = torch.stack(log_probs).to(self.device)
+            entropies_t = torch.stack(entropies).to(self.device)
+            advantages = returns_t - values_t
+            policy_adv = advantages.detach()
+            policy_adv = (policy_adv - policy_adv.mean()) / (policy_adv.std() + 1e-8)
+            policy_losses.append(-(log_probs_t * policy_adv).mean())
+            value_losses.append((returns_t - values_t).pow(2).mean())
+            entropy_terms.append(entropies_t.mean())
+        loss = (
+            torch.stack(policy_losses).mean()
+            + 0.5 * torch.stack(value_losses).mean()
+            - 0.01 * torch.stack(entropy_terms).mean()
+        )
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
