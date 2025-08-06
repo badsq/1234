@@ -1,4 +1,5 @@
 import os
+import json
 import random
 from typing import List, Sequence
 
@@ -48,12 +49,13 @@ def evaluate_agents(env: SixNimmtEnv, agents: Sequence, games: int = 150):
 def train_selfplay(
     cycles: int = 30,
     episodes_per_cycle: int = 1200,
+    device: str | None = None,
 ) -> tuple[List[RLAgent], List[float]]:
-    """Train six diverse agents in self-play."""
-    env = SixNimmtEnv(n_players=6)
+    """Train four diverse agents in self-play."""
+    env = SixNimmtEnv(n_players=4)
     base_lr = 3e-4
     lrs = [base_lr * (1 + 0.1 * i) for i in range(env.n_players)]
-    agents = [RLAgent(env.obs_dim, lr=lr) for lr in lrs]
+    agents = [RLAgent(env.obs_dim, lr=lr, device=device) for lr in lrs]
     best_scores = [float("inf")] * env.n_players
     for cycle in range(cycles):
         for _ in range(episodes_per_cycle):
@@ -90,16 +92,25 @@ if __name__ == "__main__":
     parser.add_argument("--load", action="store_true", help="skip training and load saved agents")
     parser.add_argument("--cycles", type=int, default=30)
     parser.add_argument("--episodes", type=int, default=1200)
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
-    env = SixNimmtEnv(n_players=6)
+    env = SixNimmtEnv(n_players=4)
     if args.load:
-        agents = [RLAgent(env.obs_dim) for _ in range(env.n_players)]
+        agents = [RLAgent(env.obs_dim, device=args.device) for _ in range(env.n_players)]
         for i, ag in enumerate(agents):
             ag.load(f"agent{i}_best.pth")
-        best_scores = evaluate_agents(env, agents, games=300)
+        if os.path.exists("agent_scores.json"):
+            with open("agent_scores.json", "r") as f:
+                best_scores = json.load(f)
+        else:
+            best_scores = evaluate_agents(env, agents, games=300).tolist()
+            with open("agent_scores.json", "w") as f:
+                json.dump(best_scores, f)
     else:
-        agents, best_scores = train_selfplay(args.cycles, args.episodes)
+        agents, best_scores = train_selfplay(args.cycles, args.episodes, device=args.device)
+        with open("agent_scores.json", "w") as f:
+            json.dump(best_scores, f)
 
     best_idx = int(np.argmin(best_scores))
     print(f"Best agent: {best_idx} with avg penalty {best_scores[best_idx]:.2f}")

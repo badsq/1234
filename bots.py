@@ -39,7 +39,7 @@ class RuleBot:
 
 
 class PolicyNet(nn.Module):
-    def __init__(self, obs_dim: int, hidden: int = 256, n_actions: int = 10):
+    def __init__(self, obs_dim: int, hidden: int = 512, n_actions: int = 10):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(obs_dim, hidden),
@@ -52,7 +52,7 @@ class PolicyNet(nn.Module):
 
 
 class ValueNet(nn.Module):
-    def __init__(self, obs_dim: int, hidden: int = 256):
+    def __init__(self, obs_dim: int, hidden: int = 512):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(obs_dim, hidden),
@@ -67,9 +67,10 @@ class ValueNet(nn.Module):
 class RLAgent:
     """Simple actor-critic agent."""
 
-    def __init__(self, obs_dim: int, lr: float = 3e-4):
-        self.policy = PolicyNet(obs_dim)
-        self.value = ValueNet(obs_dim)
+    def __init__(self, obs_dim: int, lr: float = 3e-4, device: str | None = None):
+        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.policy = PolicyNet(obs_dim).to(self.device)
+        self.value = ValueNet(obs_dim).to(self.device)
         params = list(self.policy.parameters()) + list(self.value.parameters())
         self.optimizer = optim.Adam(params, lr=lr)
 
@@ -80,9 +81,9 @@ class RLAgent:
         estimate so the training loop can apply entropy regularisation and
         advantage-based updates.
         """
-        obs_t = torch.tensor(obs, dtype=torch.float32)
+        obs_t = torch.tensor(obs, dtype=torch.float32, device=self.device)
         logits = self.policy(obs_t)
-        mask = torch.tensor([1.0 if c > 0 else 0.0 for c in obs[:10]], dtype=torch.float32)
+        mask = torch.tensor([1.0 if c > 0 else 0.0 for c in obs[:10]], dtype=torch.float32, device=self.device)
         masked = logits - (1 - mask) * 1e9
         probs = torch.softmax(masked, dim=-1)
         dist = torch.distributions.Categorical(probs)
@@ -106,10 +107,10 @@ class RLAgent:
         for r in reversed(rewards):
             G = r + gamma * G
             returns.insert(0, G)
-        returns_t = torch.tensor(returns, dtype=torch.float32)
-        values_t = torch.stack(values)
-        log_probs_t = torch.stack(log_probs)
-        entropies_t = torch.stack(entropies)
+        returns_t = torch.tensor(returns, dtype=torch.float32, device=self.device)
+        values_t = torch.stack(values).to(self.device)
+        log_probs_t = torch.stack(log_probs).to(self.device)
+        entropies_t = torch.stack(entropies).to(self.device)
         advantages = returns_t - values_t
         policy_adv = advantages.detach()
         policy_adv = (policy_adv - policy_adv.mean()) / (policy_adv.std() + 1e-8)
@@ -129,8 +130,8 @@ class RLAgent:
         }, path)
 
     def load(self, path: str) -> None:
-        state = torch.load(path, map_location="cpu")
+        state = torch.load(path, map_location=self.device)
         self.policy.load_state_dict(state["policy"])
         self.value.load_state_dict(state["value"])
-        self.policy.eval()
-        self.value.eval()
+        self.policy.to(self.device).eval()
+        self.value.to(self.device).eval()

@@ -1,20 +1,31 @@
 import os
+import json
+import numpy as np
 from typing import List
+
+import torch
 
 from six_nimmt_env import SixNimmtEnv, bull_value
 from bots import RLAgent, RuleBot
 
 
-def load_opponents(env: SixNimmtEnv) -> List:
+def load_opponents(env: SixNimmtEnv, device: str) -> List:
+    scores_path = "agent_scores.json"
+    worst = 3
+    if os.path.exists(scores_path):
+        with open(scores_path, "r") as f:
+            scores = json.load(f)
+        worst = int(np.argmax(scores))
     opponents: List = []
-    for i in range(1, 4):
+    for i in range(4):
+        if i == worst:
+            continue
         path = f"agent{i}_best.pth"
         if os.path.exists(path):
-            agent = RLAgent(env.obs_dim)
+            agent = RLAgent(env.obs_dim, device=device)
             agent.load(path)
             opponents.append(agent)
         else:
-            # fall back to heuristic bot
             opponents.append(RuleBot())
     return opponents
 
@@ -44,9 +55,9 @@ def choose_card(hand: List[int]) -> int:
         print("Invalid choice, try again.")
 
 
-def main() -> None:
+def main(device: str = "cpu") -> None:
     env = SixNimmtEnv()
-    opponents = load_opponents(env)
+    opponents = load_opponents(env, device)
     obs, _ = env.reset()
     done = False
     while not done:
@@ -73,4 +84,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    args = parser.parse_args()
+
+    main(device=args.device)
